@@ -72,7 +72,7 @@ class StrapiParser {
                     console.log('Backup created!')
 
                     const confirmProceed = await input(
-                        `Check if the backup at '${backupPath}' has no problems. Do you want to proceed? (y/N) `);
+                        `Check if the most recent backup has no problems. Do you want to proceed? (y/N) `);
  
                      if (!confirmProceed || confirmProceed !== 'y') {
                          console.log('Update aborted.')

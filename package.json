@@ -1,6 +1,6 @@
 {
   "name": "strapiparser",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Strapi field parser",
   "repository": "accessviolationfolk/strapi-parser",
   "main": "index.js",

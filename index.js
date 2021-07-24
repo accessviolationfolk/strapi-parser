@@ -1,44 +1,12 @@
-const fetch = require('node-fetch');
 const cliProgress = require('cli-progress');
 const _colors = require('colors');
 const fs = require('fs');
-const readline = require('readline');
-const rl = readline.createInterface(process.stdin, process.stdout);
-
-function input(msg) {
-    return new Promise((resolve, reject) => {
-        rl.question(msg, (input) => resolve(input) );
-    });
-}
-
-const fetchStrapi = async (url, method, data) => {
-    let headers = {
-        'Accept': 'application/json',
-    }
-
-    if (data)
-        headers['Content-Type'] = 'application/json';
-
-    try {
-        const response = await fetch(url,
-            { 
-                method,
-                body: data ? JSON.stringify(data) : null,
-                headers
-             })
-        const json = await response.json()    
-        return json;
-      } catch (error) {
-        console.error(error)
-      }
-}
-
-const badWarning = (lastID, uniqueField) => {
-    if (lastID !== -1)
-        console.error(`The last ${uniqueField} parsed successfuly is ${lastID}, the tool won't skip previously parsed rows, so it means it's safer to not parse again data with '${uniqueField} <= ${lastID}'`);
-    else
-        console.error('No data was updated');
-}
+const createBackup = require('./createBackup');
+const {
+    input,
+    fetchStrapi,
+    badWarning
+} = require('./helper');
 
 class StrapiParser {
     constructor({ type, field, apiURL, uniqueField }) {
@@ -55,17 +23,25 @@ class StrapiParser {
     async parse(fn) {
         const allFieldData = await fetchStrapi(this.typeEndpoint, 'GET');
 
+        if (!allFieldData) {
+            throw new Error('No data from Strapi, check the message above for details.');
+        }
+
+        if (!allFieldData.length) {
+            throw new Error (`No data returned from ${this.typeEndpoint}`);
+        }
+
         const prog = new cliProgress.SingleBar({
             format: `Parsing content | ${_colors.cyan('{bar}')} | {percentage}%`
         }, cliProgress.Presets.shades_classic);
         prog.start(allFieldData.length, 0);
-        const parsedContent = allFieldData.map(fieldData => {
+        const parsedContent = allFieldData.map(async fieldData => {
             prog.increment();
-            return { id: fieldData[this.uniqueField], data: fn(fieldData[this.field], fieldData) }
+            return { id: fieldData[this.uniqueField], data: await fn(fieldData[this.field], fieldData) }
         })
         prog.stop();
 
-        return parsedContent
+        return Promise.all(parsedContent);
     }
 
     async _doUpdate(updateEndpoint, updateObj, uniqueField) {
@@ -92,25 +68,18 @@ class StrapiParser {
     async update(parsedContent, shouldBackup) {
         if (shouldBackup) {
             try {
-                const backupPath = `./backups/${this.type}-${this.field}-${new Date().getTime()}.json`
-                const allFieldData = await fetchStrapi(this.typeEndpoint, 'GET');
-                const backup = JSON.stringify(allFieldData);
-                fs.mkdirSync('./backups', { recursive: true });
-                console.log(`Creating a backup at ${backupPath}`)
-                fs.writeFileSync(backupPath, backup, 'utf8');
-                if (fs.existsSync(backupPath)) {
-                   console.log('Backup created!')
+                if (await createBackup(this.type, this.field, this.typeEndpoint)) {
+                    console.log('Backup created!')
 
-                   const confirmProceed = await input(
-                       `Check if the backup at '${backupPath}' has no problems. Do you want to proceed? (y/N) `);
-
-                    if (!confirmProceed || confirmProceed !== 'y') {
-                        console.log('Update aborted.')
-                        process.exit(1)
-                    }
+                    const confirmProceed = await input(
+                        `Check if the backup at '${backupPath}' has no problems. Do you want to proceed? (y/N) `);
+ 
+                     if (!confirmProceed || confirmProceed !== 'y') {
+                         console.log('Update aborted.')
+                         process.exit(1)
+                     }
                 } else {
-                    console.log("Backup doesn't exists")
-                    process.exit(1)
+                    throw new Error("An error occurred while creating the backup")
                 }
             } catch(e) {
                 throw e
@@ -154,16 +123,15 @@ class StrapiParser {
 
     /*
     *   Update it back based on the specified backup file.
-    *   field: Name of the field parsed when the backup was created
     *   allFields: This will bypass "field", will update all fields to what it was before
     */
-    async applyBackup(filepath, { field, allFields, uniqueField }) {
+    async applyBackup(filepath, { allFields, uniqueField }) {
         if (!uniqueField) {
             console.log('Supply the primary key in "uniqueField" prop, usually just id')
             return;
         }
 
-        if (!field && !allFields) {
+        if (!this.field && !allFields) {
             console.log('Supply either field or allFields')
             return;
         }
